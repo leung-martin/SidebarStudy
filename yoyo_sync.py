@@ -123,12 +123,16 @@ class YoyoSync(threading.Thread):
                                downloading, out of date, up to date
       ("yoyo_levels", (levels {code: level}, started_at, full))
       ("yoyo_due", (codes due for review, in YoYo's order, fetched_at))
+    Every exchange with YoYo is appended to log_file (one JSON line each) as a receipt:
+      {"t": epoch, "kind": upload|download|due|check|sign-in|blocked|dropped|error, "text": summary,
+       "cards": [{"code", "answer"?, "before", "after"}]}   (cards only where levels changed)
     """
 
-    def __init__(self, events, auth_file, cache_file):
+    def __init__(self, events, auth_file, cache_file, log_file=None):
         super().__init__(daemon=True)
         self.events = events
-        self.auth_file, self.cache_file = auth_file, cache_file
+        self.auth_file, self.cache_file, self.log_file = auth_file, cache_file, log_file
+        self.last_error = ""
         self.cookie = _load(auth_file, {}).get("cookie", "")
         # cards: code -> {"id", "levelId"}; pending: answers not yet sent to YoYo
         self.cache = _load(cache_file, {})
@@ -158,6 +162,7 @@ class YoyoSync(threading.Thread):
     def set_cookie(self, cookie):
         self.cookie = cookie.strip()
         _save(self.auth_file, {"cookie": self.cookie})
+        self.log("sign-in", "Saved a new YoYo session")
         self.sync_now(full=True)
 
     def record(self, code, answer):
@@ -182,6 +187,24 @@ class YoyoSync(threading.Thread):
     def status(self, state):
         self.events.put(("yoyo_status", state))
 
+    def log(self, kind, text, cards=None):
+        """Append one timestamped receipt line to the activity log."""
+        if not self.log_file:
+            return
+        entry = {"t": int(time.time()), "kind": kind, "text": text}
+        if cards:
+            entry["cards"] = cards
+        try:
+            with self.lock, open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def log_error(self, text):
+        if text != self.last_error:  # an outage retries every minute: log it once
+            self.log("error", text)
+        self.last_error = text
+
     def run(self):
         self.sync_now(full=True)  # full download at startup (~20 s)
         while True:
@@ -199,21 +222,30 @@ class YoyoSync(threading.Thread):
         client = YoyoClient(self.cookie)
         try:
             stale = time.time() - self.cache["full_pull"] > FULL_PULL_EVERY
-            if check and not stale and self.known and self._changed_on_yoyo(client):
-                self.status("out of date")
-                self.want_full = True
+            if check and not stale and self.known:
+                changed = self._changed_on_yoyo(client)
+                self.log("check", "Checked YoYo for changes made elsewhere: "
+                         + ("found some, downloading" if changed else "none"))
+                if changed:
+                    self.status("out of date")
+                    self.want_full = True
             self._push(client)
             if self.want_due:  # after the push, so cards just answered aren't still listed as due
                 self.want_due = False
                 fetched = time.time()
-                self.events.put(("yoyo_due", (self._due(client), fetched)))
+                due = self._due(client)
+                self.log("due", f"Asked YoYo which cards are due: {len(due)} review(s)")
+                self.events.put(("yoyo_due", (due, fetched)))
             if self.want_full or stale or not self.cache["cards"]:
                 self.want_full = False
                 self._pull(client)
             self.status("blocked" if self.cache["push_blocked"] else "up to date")
+            self.last_error = ""
         except AuthError:
+            self.log_error("YoYo sign-in expired: nothing sent")
             self.status("expired")
-        except Exception:  # offline, server error: keep answers and retry later
+        except Exception as e:  # offline, server error: keep answers and retry later
+            self.log_error(f"Couldn't reach YoYo ({type(e).__name__}): answers kept to send later")
             self.status("offline")
             threading.Timer(60, self.wake.set).start()
 
@@ -282,6 +314,13 @@ class YoyoSync(threading.Thread):
                 self.lessons = []  # refresh the lesson list on every full pull
             cards = self._fetch(client, level_id)
         levels = {}
+        if not level_id:  # a full download: note what changed on YoYo since the last one
+            changed = [{"code": c["code"], "before": self.known[c["code"]], "after": c.get("masteryLevel", -1)}
+                       for c in cards if c.get("code") in self.known
+                       and self.known[c["code"]] != c.get("masteryLevel", -1)]
+            mastered = sum(1 for c in cards if c.get("masteryLevel", -1) >= MASTERED)
+            self.log("download", f"Downloaded {len(cards)} cards' levels ({mastered} mastered)"
+                     + (f"; {len(changed)} changed since the last download" if changed else ""), changed[:300])
         with self.lock:
             for c in cards:
                 code = c.get("code")
@@ -309,6 +348,11 @@ class YoyoSync(threading.Thread):
                 unknown.append(item)  # a full pull since the answer didn't find it on YoYo: drop it
         for level_id, items in by_level.items():
             before = {c["code"]: c.get("masteryLevel", -1) for c in self._fetch(client, level_id)}
+            elsewhere = [{"code": code, "before": self.known[code], "after": lv} for code, lv in before.items()
+                         if code in self.known and self.known[code] != lv]
+            if elsewhere:  # e.g. studied on the website: receipt it before this send absorbs it
+                self.log("download", f"Noticed {len(elsewhere)} card(s) changed on YoYo since the last download",
+                         elsewhere)
             client.submit(level_id, [{"flashcardId": fid, "answer": it["answer"]} for it, fid in items])
             with self.lock:
                 self.cache["pending"] = [p for p in self.cache["pending"]
@@ -318,14 +362,25 @@ class YoyoSync(threading.Thread):
             answered = {it["code"] for it, _ in items}
             dropped = [code for code, lv in ((c["code"], c.get("masteryLevel", -1)) for c in after_cards)
                        if code not in answered and lv < before.get(code, -1)]
+            after = {c["code"]: c.get("masteryLevel", -1) for c in after_cards}
+            names = {"easy": "Easy", "good": "Not Bad", "hard": "Forgot"}
+            counts = [f"{n} {names[a]}" for a in ("easy", "good", "hard")
+                      if (n := sum(1 for it, _ in items if it["answer"] == a))]
+            self.log("upload", f"Sent {len(items)} answer(s): " + ", ".join(counts),
+                     [{"code": it["code"], "answer": it["answer"], "before": before.get(it["code"], -1),
+                       "after": after.get(it["code"], -1)} for it, _ in items])
             self._pull(client, level_id, after_cards)
             if dropped:
                 with self.lock:
                     self.cache["push_blocked"] = (f"{len(dropped)} card(s) you didn't answer lost level "
                                                   f"({', '.join(dropped[:5])})")
                     _save(self.cache_file, self.cache)
+                self.log("blocked", "Uploads stopped: " + self.cache["push_blocked"],
+                         [{"code": c, "before": before.get(c, -1), "after": after.get(c, -1)} for c in dropped])
                 return
         if unknown:
+            self.log("dropped", f"Dropped {len(unknown)} answer(s) for cards YoYo doesn't have",
+                     [{"code": it["code"], "answer": it["answer"]} for it in unknown])
             with self.lock:
                 self.cache["pending"] = [p for p in self.cache["pending"] if p not in unknown]
                 _save(self.cache_file, self.cache)

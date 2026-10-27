@@ -29,7 +29,13 @@ py -3.12 -m venv .venv
 .venv\Scripts\python app.py      # or build.bat for SidebarStudy\SidebarStudy.exe
 ```
 
+For other PCs, `build-portable.bat` makes `SidebarStudy-portable.exe`: one file with your decks
+and the speech models inside. Copy it anywhere and run it; it saves progress, settings and your
+YoYo sign-in beside itself. It contains YoYo's decks, so keep it private.
+
 Sign in to YoYo from ⚙ → YoYo sync → Sign in… (paste your yoyochinese.com session cookie).
+Every exchange with YoYo is logged to `yoyo_log.jsonl` and shown as timestamped receipts under
+"YoYo activity" on the Mastery page.
 Hotkeys: Ctrl+Alt+M mic on/off · Ctrl+Alt+H hear it · Ctrl+Alt+G got it.
 
 ## Android setup

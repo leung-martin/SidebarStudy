@@ -7,11 +7,28 @@ import json
 import time
 
 LEVEL_KEYS = ["new", "0", "1", "2", "3", "4", "5"]
+ACTIVITY_SHOWN = 3000  # newest receipts put on the page
 
 
-def build(decks, level_of, synced_at, path, history=None):
+def read_log(path):
+    """The YoYo activity log (one JSON object per line), oldest first."""
+    entries = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    pass  # a line cut short by a crash
+    except OSError:
+        pass
+    return entries
+
+
+def build(decks, level_of, synced_at, path, history=None, activity=None):
     """decks: {course: [card]}; level_of(code) -> -1..5; synced_at: epoch of last YoYo download;
-    history: {"YYYY-MM-DD": {mastered, learning, new, easy, good, hard}} for the progress charts."""
+    history: {"YYYY-MM-DD": {mastered, learning, new, easy, good, hard}} for the progress charts;
+    activity: the YoYo activity log entries (see YoyoSync), shown as timestamped receipts."""
     courses = []
     for name, cards in decks.items():
         rows = []
@@ -20,7 +37,9 @@ def build(decks, level_of, synced_at, path, history=None):
                          c.get("level", ""), c.get("unit", "").strip(), c.get("lesson", "").strip()])
         courses.append({"name": name, "cards": rows})
     days = [dict(date=d, **v) for d, v in sorted((history or {}).items())]
-    data = {"courses": courses, "history": days,
+    log = [dict(e, when=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e.get("t", 0))))
+           for e in (activity or [])[-ACTIVITY_SHOWN:]]
+    data = {"courses": courses, "history": days, "activity": log,
             "synced": time.strftime("%Y-%m-%d %H:%M", time.localtime(synced_at)) if synced_at else "",
             "generated": time.strftime("%Y-%m-%d %H:%M")}
     html = TEMPLATE.replace("/*DATA*/null", json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
@@ -110,6 +129,23 @@ TEMPLATE = r"""<!doctype html>
   details.table td, details.table th { padding: 3px 8px; text-align: right; border-top: 1px solid var(--track); }
   details.table th { color: var(--dim); font-weight: 600; }
   details.table td:first-child, details.table th:first-child { text-align: left; }
+  /* YoYo activity receipts */
+  .activity .filters { display: flex; flex-wrap: wrap; gap: 14px; color: var(--dim); font-size: 12px; margin-bottom: 8px; }
+  .activity .filters label { cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+  .activity .filters input { flex: none; min-width: 0; margin: 0; }
+  .activity .day { color: var(--dim); font-size: 12px; font-weight: 700; margin: 12px 0 4px; }
+  .activity .log { max-height: 460px; overflow-y: auto; }
+  .rcpt { border-top: 1px solid var(--track); padding: 6px 0; font-size: 13px; }
+  .rcpt .when { color: var(--dim); font-variant-numeric: tabular-nums; margin-right: 10px; }
+  .rcpt .kind { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-right: 8px; background: var(--btn); }
+  .rcpt .kind.upload { color: #4cd3a0; } .rcpt .kind.download { color: #6aa8ff; } .rcpt .kind.due { color: var(--violet); }
+  .rcpt .kind.error, .rcpt .kind.blocked, .rcpt .kind.dropped { color: #ff6b8b; } .rcpt .kind.check { color: var(--dim); }
+  .rcpt details { background: transparent; margin: 4px 0 0; }
+  .rcpt details summary { display: inline; padding: 0; color: var(--dim); font-size: 12px; }
+  .rcpt table { margin: 4px 0 0 4px; width: auto; font-size: 12px; }
+  .rcpt td { padding: 3px 8px; }
+  .rcpt td.hz { font-size: 16px; }
+  .up { color: #4cd3a0; } .down { color: #ff6b8b; }
   @media (max-width: 760px) { .progress .charts { grid-template-columns: 1fr; } }
   @media (max-width: 640px) {
     summary { grid-template-columns: 1fr 70px; }
@@ -123,6 +159,7 @@ TEMPLATE = r"""<!doctype html>
   <h1>Flashcard Mastery</h1>
   <div class="sub" id="sub"></div>
   <section class="progress" id="progress"></section>
+  <section class="progress activity" id="activity"></section>
   <div class="tip" id="tip"></div>
   <div class="summary">
     <div class="stats" id="stats"></div>
@@ -339,6 +376,49 @@ function progress() {
   });
 }
 progress();
+
+// ---------- YoYo activity: a timestamped receipt of every exchange with YoYo
+function activity() {
+  const box = document.getElementById("activity");
+  const A = DATA.activity || [];
+  const card = {};
+  for (const c of DATA.courses) for (const r of c.cards) card[r[0]] = r;
+  const ANSWER = { easy: "Easy", good: "Not Bad", hard: "Forgot" };
+  const LV = v => v < 0 ? "new" : v >= 5 ? "5 ✓" : String(v);
+  const KINDS = { upload: "Sent", download: "Downloaded", due: "Due list", check: "Check", "sign-in": "Sign-in",
+                  blocked: "Blocked", dropped: "Dropped", error: "Problem" };
+  const show = { check: false };
+  function draw() {
+    const rows = A.filter(e => show[e.kind] !== false).reverse();
+    let day = "", html = "";
+    for (const e of rows) {
+      const d = e.when.slice(0, 10);
+      if (d !== day) { day = d; html += `<div class="day">${fmtDate(d)}</div>`; }
+      let detail = "";
+      if (e.cards && e.cards.length) {
+        detail = `<details><summary>${e.cards.length} card${e.cards.length > 1 ? "s" : ""}</summary><table>` +
+          e.cards.map(c => {
+            const r = card[c.code] || [];
+            const cls = c.after > c.before ? "up" : c.after < c.before ? "down" : "";
+            return `<tr><td class="hz">${esc(r[1] || "")}</td><td class="py">${esc(r[2] || "")}</td>` +
+              `<td>${c.answer ? ANSWER[c.answer] : ""}</td><td class="${cls}">${LV(c.before)} → ${LV(c.after)}</td>` +
+              `<td class="code">${esc(c.code)}</td></tr>`;
+          }).join("") + `</table></details>`;
+      }
+      html += `<div class="rcpt"><span class="when">${e.when.slice(11)}</span>` +
+        `<span class="kind ${e.kind}">${KINDS[e.kind] || esc(e.kind)}</span>${esc(e.text)}${detail}</div>`;
+    }
+    box.querySelector(".log").innerHTML = html || '<div class="sub">Nothing yet.</div>';
+  }
+  box.innerHTML = `<h2>YoYo activity</h2>
+    <div class="filters"><span>Every exchange with YoYo, newest first. Click "cards" to see each card's level before → after.</span>
+      <label><input type="checkbox" id="showChecks"> show routine 5-minute checks</label></div>
+    <div class="log"></div>`;
+  if (!A.length) { box.querySelector(".log").innerHTML = '<div class="sub">Nothing yet — receipts start with the next sync.</div>'; return; }
+  document.getElementById("showChecks").onchange = e => { show.check = e.target.checked; draw(); };
+  draw();
+}
+activity();
 
 document.getElementById("sub").textContent =
   (DATA.synced ? `Levels as of your last YoYo download (${DATA.synced})` : "Not synced with YoYo yet") +

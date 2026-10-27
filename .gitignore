@@ -36,3 +36,5 @@ mobile/plugins/speech-recognition/android/build/
 
 # npm installs the file: plugin dependency with its own packages
 mobile/plugins/*/node_modules/
+yoyo_log.jsonl
+SidebarStudy-portable.exe

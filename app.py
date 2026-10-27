@@ -41,16 +41,21 @@ def _find_root():
         d = parent
 
 
-ROOT = _find_root()
-CARD_DIR = os.path.join(ROOT, "flashcards")
-CN_MODEL = os.path.join(ROOT, "models", "vosk-model-small-cn-0.22")
-EN_MODEL = os.path.join(ROOT, "models", "vosk-model-small-en-us-0.15")
+ROOT = _find_root()  # where your progress, settings and sign-in are saved
+# The portable single-file exe carries its decks, speech models and icon inside itself
+# (unpacked to a temp folder at launch); saved data stays beside the exe so it travels with it.
+_bundle = getattr(sys, "_MEIPASS", "")
+RES = _bundle if _bundle and os.path.isdir(os.path.join(_bundle, "flashcards")) else ROOT
+CARD_DIR = os.path.join(RES, "flashcards")
+CN_MODEL = os.path.join(RES, "models", "vosk-model-small-cn-0.22")
+EN_MODEL = os.path.join(RES, "models", "vosk-model-small-en-us-0.15")
 PROGRESS_FILE = os.path.join(ROOT, "progress.json")
 SETTINGS_FILE = os.path.join(ROOT, "settings.json")
 YOYO_AUTH_FILE = os.path.join(ROOT, "yoyo_auth.json")    # your YoYo session cookie
 YOYO_CACHE_FILE = os.path.join(ROOT, "yoyo_cache.json")  # card ids + answers waiting to sync
 MASTERY_FILE = os.path.join(ROOT, "mastery.html")        # explorer page, rebuilt on each open
 HISTORY_FILE = os.path.join(ROOT, "progress_history.json")  # one snapshot per day, for the trend charts
+YOYO_LOG_FILE = os.path.join(ROOT, "yoyo_log.jsonl")     # receipt of every exchange with YoYo
 
 PASS_WORDS = {"pass", "passed", "past"}
 PASS_CONF = 0.65          # min confidence for the English "pass" keyword
@@ -587,7 +592,7 @@ class App:
         self._build_ui()
         self.listener = Listener(self.events)
         self.listener.start()
-        self.sync = YoyoSync(self.events, YOYO_AUTH_FILE, YOYO_CACHE_FILE)
+        self.sync = YoyoSync(self.events, YOYO_AUTH_FILE, YOYO_CACHE_FILE, YOYO_LOG_FILE)
         self.sync.start()
         self._select_mic(initial=True)
         if self.sync.signed_in:  # wait for YoYo's due list (falls back if it doesn't come)
@@ -612,7 +617,7 @@ class App:
         r = self.root
         r.title("Sidebar Study")
         try:
-            r.iconbitmap(os.path.join(ROOT, "icon.ico"))
+            r.iconbitmap(os.path.join(RES, "icon.ico"))
         except tk.TclError:
             pass
         r.configure(bg=BG)
@@ -1737,7 +1742,7 @@ class App:
         """Open the mastery explorer (mastery.html) with the latest synced levels."""
         self._log_day()
         mastery_view.build(self.decks, self._level, self.sync.cache.get("full_pull", 0), MASTERY_FILE,
-                           history=load_json(HISTORY_FILE, {}))
+                           history=load_json(HISTORY_FILE, {}), activity=mastery_view.read_log(YOYO_LOG_FILE))
         webbrowser.open(pathlib.Path(MASTERY_FILE).as_uri())
 
     def _sync_clicked(self):
