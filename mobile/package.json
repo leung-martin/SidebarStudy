@@ -1,0 +1,30 @@
+{
+    "name": "mobile",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "test": "node test/grading.test.mjs"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "type": "module",
+    "dependencies": {
+        "@capacitor-community/keep-awake": "^8.0.1",
+        "@capacitor-community/speech-recognition": "file:plugins/speech-recognition",
+        "@capacitor-community/text-to-speech": "^8.0.2",
+        "@capacitor/android": "^8.5.3",
+        "@capacitor/core": "^8.5.3",
+        "@capacitor/haptics": "^8.0.2",
+        "@capacitor/preferences": "^8.0.1",
+        "capacitor-secure-storage-plugin": "^0.13.0",
+        "pinyin-pro": "^3.29.5"
+    },
+    "devDependencies": {
+        "@capacitor/cli": "^8.5.3",
+        "vite": "^8.3.5"
+    }
+}

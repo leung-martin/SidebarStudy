@@ -1,0 +1,9 @@
+{
+  "appId": "com.sidebarstudy.app",
+  "appName": "Sidebar Study",
+  "webDir": "dist",
+  "loggingBehavior": "none",
+  "android": {
+    "backgroundColor": "#101219"
+  }
+}

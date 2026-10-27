@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sidebar Study</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="header">
+    <select id="deck" aria-label="Deck"></select>
+    <button id="sync" class="sync" type="button"></button>
+    <span id="score" class="score"></span>
+    <span id="streak" class="streak"></span>
+  </header>
+  <div class="progress"><div id="progressFill"></div><span id="count"></span></div>
+
+  <main id="card" class="card">
+    <div class="card-top">
+      <span id="levelBar" class="level-bar" aria-label="YoYo level"></span>
+    </div>
+    <div class="card-main"><div id="hz" class="hz" aria-live="polite"></div></div>
+    <div class="card-side">
+      <div id="english" class="english"></div>
+      <div id="status" class="status"></div>
+    </div>
+  </main>
+
+  <footer class="controls">
+    <button id="mic" class="mic" type="button"><span class="mic-icon">🎙</span><span id="micLabel">Tap to talk</span></button>
+    <div class="row">
+      <button id="hear" type="button" class="btn teal">🔊 Hear</button>
+      <button id="gotit" type="button" class="btn green">✓ Got it</button>
+      <button id="skip" type="button" class="btn orange">Skip</button>
+      <button id="pass" type="button" class="btn pink">Pass</button>
+      <button id="gear" type="button" class="btn violet" aria-label="Settings">⚙</button>
+    </div>
+  </footer>
+
+  <dialog id="settings" class="settings">
+    <form method="dialog" class="sheet">
+      <h2>Settings</h2>
+
+      <section>
+        <h3>YoYo account</h3>
+        <p id="accountState" class="dim"></p>
+        <div id="signInForm">
+          <input id="email" type="email" autocomplete="username" placeholder="YoYo email">
+          <input id="password" type="password" autocomplete="current-password" placeholder="YoYo password">
+          <button id="signIn" type="button" class="btn teal">Sign in</button>
+        </div>
+        <div class="row">
+          <button id="syncNow" type="button" class="btn blue">Sync now</button>
+          <button id="signOut" type="button" class="btn">Sign out</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Listening</h3>
+        <label class="radio"><input type="radio" name="micMode" value="tap"> Tap to talk</label>
+        <label class="radio"><input type="radio" name="micMode" value="always"> Always listening</label>
+        <label class="field">Tap to talk: mic turns off after no speech for
+          <select id="listenWindow"><option value="60">1 min</option><option value="90">1.5 min</option>
+            <option value="120">2 min</option><option value="180">3 min</option><option value="300">5 min</option></select></label>
+        <label class="field">Always listening: mic off after silence of
+          <select id="sleepMin"><option value="1">1 min</option><option value="2">2 min</option><option value="3">3 min</option>
+            <option value="5">5 min</option><option value="10">10 min</option><option value="0">never</option></select></label>
+      </section>
+
+      <section>
+        <h3>Cards</h3>
+        <label class="field">Next card after
+          <select id="delay"><option value="1.5">1.5 s</option><option value="2">2 s</option><option value="3">3 s</option>
+            <option value="4">4 s</option><option value="5">5 s</option><option value="7">7 s</option><option value="10">10 s</option></select></label>
+        <label class="check"><input id="showEnglish" type="checkbox"> Show English before answering</label>
+        <label class="check"><input id="reviewMastered" type="checkbox"> Review mastered cards</label>
+        <label class="check"><input id="keepAwake" type="checkbox"> Keep the screen on</label>
+      </section>
+
+      <button class="btn close" value="close">Done</button>
+    </form>
+  </dialog>
+
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>

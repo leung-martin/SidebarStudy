@@ -1,0 +1,38 @@
+# --- personal data: never publish ---
+yoyo_auth.json
+yoyo_cache.json
+progress.json
+progress.backup-*.json
+progress_history.json
+settings.json
+mastery.html
+nul.tmp
+
+# YoYo Chinese course content (their copyright): add your own exported decks locally
+flashcards/
+mobile/public/decks/
+mobile/test/cases.json
+
+# --- downloads and builds ---
+.venv/
+models/
+__pycache__/
+SidebarStudy/
+*.apk
+*.log
+
+# mobile app
+mobile/node_modules/
+mobile/dist/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/app/src/main/assets/public/
+mobile/android/app/src/main/assets/capacitor.config.json
+mobile/android/app/src/main/assets/capacitor.plugins.json
+mobile/android/capacitor-cordova-android-plugins/
+mobile/plugins/speech-recognition/android/build/
+
+# npm installs the file: plugin dependency with its own packages
+mobile/plugins/*/node_modules/
