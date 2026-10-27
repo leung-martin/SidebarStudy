@@ -301,10 +301,25 @@ export function numberVariants(text) {
   return [text, ...variants];
 }
 
+// ---------- words Google keeps mishearing: what it writes -> what you said. Add to this when a
+// word you say right is always marked wrong (each entry is also matched in letters, "Shenyang").
+export const HEARD_AS = {
+  沈阳: ["陈阳", "沉阳", "晨阳", "神阳", "深阳", "审阳", "陈杨", "沈杨", "shenyang", "shen yang"],
+};
+
+/** heard text with any known mishears put back to the word you said (the text itself first). */
+export function mishearVariants(text) {
+  let fixed = text;
+  for (const [word, heard] of Object.entries(HEARD_AS)) {
+    for (const h of heard) fixed = fixed.replace(new RegExp(h.replace(/ /g, "\\s*"), "gi"), word);
+  }
+  return fixed === text ? [text] : [text, fixed];
+}
+
 export function checkBest(card, alternatives) {
   let best = null;
   const score = r => (r.ok ? (r.toneOk ? 3 : 2) : 0) * 1000 + r.matched.size;
-  for (const text of alternatives.flatMap(a => a ? numberVariants(a) : [])) {
+  for (const text of alternatives.flatMap(a => a ? mishearVariants(a).flatMap(numberVariants) : [])) {
     if (!text) continue;
     const r = { ...check(card, text), text };
     if (!best || score(r) > score(best)) best = r;
