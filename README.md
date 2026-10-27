@@ -1,14 +1,15 @@
 # Sidebar Study
 
 Mandarin flash cards you answer out loud, synced with your [YoYo Chinese](https://yoyochinese.com)
-flashcard mastery. Two apps share the same grading rules and YoYo sync:
+flashcard mastery. Three apps share the same grading rules and YoYo sync:
 
 - **Desktop (Windows)** — an always-on-top window to keep beside a game. Offline speech
   recognition (Vosk), global hotkeys, mic auto-sleep, a mastery explorer page.
 - **Android** (`mobile/`) — a Capacitor app for the desk at work. Google speech recognition,
   tap the card to talk.
+- **Wear OS** (`wear/`) — a standalone Galaxy Watch app: tap the card to talk, grade on the wrist.
 
-Both send your answers to YoYo (Easy +2 / Not Bad +1 / Forgot → 0) and study YoYo's due
+All three send your answers to YoYo (Good +2 / Not Bad +1 / Forgot → 0) and study YoYo's due
 reviews first. YoYo is the source of truth; every send is checked so cards you didn't answer
 can't lose level.
 
@@ -53,6 +54,28 @@ if you use Google sign-in). `mobile/plugins/speech-recognition` is a patched cop
 `@capacitor-community/speech-recognition` (see the `patched:` comments) that keeps listening
 reliably on Android.
 
+## Wear OS setup (`wear/`)
+
+A native watch app (Kotlin, Compose for Wear OS) for Galaxy Watch 4 and newer. It works on its
+own, syncing with YoYo over the watch's connection. It grades with the phone app's own grading
+code (`mobile/src/grading.js` + pinyin-pro, bundled by `npm run build:watch` and run in QuickJS),
+so all three apps judge answers the same way. Tap the card to talk; Forgot / Not bad / Good grade
+it; ⋯ has ★ Master, Hear it, sync, deck, settings and YoYo sign-in.
+
+```powershell
+cd mobile; npm install; cd ..\wear
+build-wear.bat       # builds ..\SidebarStudy-wear.apk (needs your decks in ..\flashcards)
+```
+
+To install, turn on the watch's developer options (Settings → About watch → Software → tap
+Software version 5 times), then Developer options → ADB debugging and Wireless debugging:
+
+```powershell
+adb pair <ip>:<pairing port>     # enter the code the watch shows
+adb connect <ip>:<port>
+adb install -r SidebarStudy-wear.apk
+```
+
 ## Tests
 
 ```powershell
@@ -60,4 +83,8 @@ cd mobile
 ..\.venv\Scripts\python test\make_cases.py   # needs your decks: compares the JS grading with the desktop app
 node test\grading.test.mjs
 node test\yoyo.test.mjs                      # fake YoYo; the last part reads your real account (read-only)
+node test\watch-bundle.test.mjs              # the watch's grading bundle agrees with the phone
+
+cd ..\wear
+gradlew.bat :app:testDebugUnitTest          # the watch's YoYo sync against a fake YoYo
 ```

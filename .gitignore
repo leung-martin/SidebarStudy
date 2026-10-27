@@ -17,7 +17,8 @@ mobile/test/cases.json
 .venv/
 models/
 __pycache__/
-SidebarStudy/
+# the desktop exe build (only at the top: not the com/sidebarstudy/ code folders)
+/SidebarStudy/
 *.apk
 *.log
 
@@ -38,3 +39,12 @@ mobile/plugins/speech-recognition/android/build/
 mobile/plugins/*/node_modules/
 yoyo_log.jsonl
 SidebarStudy-portable.exe
+
+# Wear OS app: generated grading bundle, your decks, build output
+wear/app/src/main/assets/
+wear/local.properties
+wear/.gradle/
+wear/build/
+wear/app/build/
+.kotlin/
+wear/.kotlin/

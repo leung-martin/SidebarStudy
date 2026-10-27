@@ -6,7 +6,8 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "test": "node test/grading.test.mjs"
+        "test": "node test/grading.test.mjs",
+        "build:watch": "vite build --config vite.watch.config.js"
     },
     "keywords": [],
     "author": "",
