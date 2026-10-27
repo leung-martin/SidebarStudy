@@ -64,6 +64,17 @@ console.log("fake bad sync: sent", JSON.stringify(r.srv.state.submits), "| block
 r = await runFake({ expireOnce: true });
 console.log("fake expired session: logins", r.srv.state.logins, "| sends still worked:", r.srv.state.submits.length === 2);
 
+{  // ★ Master: Good x3 for one card, each in its own upload so YoYo counts all three
+  const srv = fakeServer(), s = new YoyoSync(srv.http, memStore(), events([]));
+  s.credentials = { email: "me@x", password: "pw" };
+  s.wantDue = false;
+  await s.pull();
+  for (let i = 0; i < 3; i++) s.record("B", "easy");
+  s.record("A", "good"); clearTimeout(s.timer);
+  await s.push();
+  console.log("fake master:   sent", JSON.stringify(srv.state.submits), "| B now", srv.levels.B, "(want 5) | blocked:", JSON.stringify(s.blocked));
+}
+
 // ---- real YoYo, read-only
 const ck = JSON.parse(readFileSync(new URL("../../yoyo_auth.json", import.meta.url), "utf-8")).cookie;
 const token = ck.split(";").map(p => p.trim()).find(p => p.startsWith("token=")).slice(6);

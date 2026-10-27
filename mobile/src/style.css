@@ -35,7 +35,9 @@ button, select, input { font: inherit; color: inherit; }
 }
 .card.listening { border-color: color-mix(in srgb, var(--violet) 70%, var(--border)); }
 .card:active { filter: brightness(1.12); }  /* the card is a button: show the tap */
-.card-top { grid-area: top; display: flex; justify-content: flex-end; min-height: 16px; }
+.card-top { grid-area: top; display: flex; justify-content: space-between; align-items: center; min-height: 16px; }
+.mini { border: 0; border-radius: 8px; background: var(--btn); font: 700 12px system-ui, sans-serif; padding: 5px 9px; }
+.yellow { color: var(--yellow); }
 .card-main { grid-area: main; display: flex; align-items: flex-end; justify-content: center; min-height: 0; min-width: 0; overflow: hidden; }
 .card-side { grid-area: side; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; padding-top: 8px; }
 .english { font-size: 17px; }
@@ -105,4 +107,11 @@ button, select, input { font: inherit; color: inherit; }
   .card-side { justify-content: flex-start; }
   .controls { flex-direction: row; } .controls .mic { flex: 0 0 34%; } .controls .row { flex: 1; }
   .progress { display: none; }
+}
+
+/* nothing beside the characters yet (no meaning or message): they get the whole card */
+.card:has(#english:empty):has(#status:empty) { grid-template-rows: auto 1fr; grid-template-areas: "top" "main"; }
+.card:has(#english:empty):has(#status:empty) .card-side { display: none; }
+@media (min-aspect-ratio: 3/2) {
+  .card:has(#english:empty):has(#status:empty) { grid-template-columns: minmax(0, 1fr); }
 }

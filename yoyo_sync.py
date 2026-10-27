@@ -117,6 +117,22 @@ def _save(path, data):
     os.replace(tmp, path)
 
 
+def _uploads(by_level):
+    """(level id, answers) uploads that name each card at most once: answering a card again
+    (★ Master sends Good three times) goes in the next upload, so YoYo counts every answer."""
+    for level_id, items in by_level.items():
+        rounds = []
+        for item, fid in items:
+            r = next((r for r in rounds if fid not in r[1]), None)
+            if r is None:
+                r = ([], set())
+                rounds.append(r)
+            r[0].append((item, fid))
+            r[1].add(fid)
+        for batch, _ in rounds:
+            yield level_id, batch
+
+
 class YoyoSync(threading.Thread):
     """Background worker. Talks to the UI only through `events`:
       ("yoyo_status", state)   one of: not signed in, expired, offline, blocked,
@@ -346,7 +362,7 @@ class YoyoSync(threading.Thread):
                 by_level.setdefault(card["levelId"], []).append((item, card["id"]))
             elif item["t"] < self.cache["full_pull"]:
                 unknown.append(item)  # a full pull since the answer didn't find it on YoYo: drop it
-        for level_id, items in by_level.items():
+        for level_id, items in _uploads(by_level):
             before = {c["code"]: c.get("masteryLevel", -1) for c in self._fetch(client, level_id)}
             elsewhere = [{"code": code, "before": self.known[code], "after": lv} for code, lv in before.items()
                          if code in self.known and self.known[code] != lv]

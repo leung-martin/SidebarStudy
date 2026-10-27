@@ -18,7 +18,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 import unicodedata
 import webbrowser
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 import numpy as np
 import sounddevice as sd
@@ -69,6 +69,7 @@ TTS_VOLUME = 100
 LATIN_GAP_MAX = 4        # hanzi an English word in a card may come out as
 GRAMMAR_CONF = 0.8       # min confidence per character for the card-limited recognizer
 NEW_PER_ROUND = 25        # new cards per round, like a YoYo deck
+HANZI_MAX = 110  # biggest the characters get (points), in a roomy window
 COMPARE_GUTTER = 30       # px on the left for the 🎯 / 🎙 row icons when comparing pronunciations
 POP_MARGIN = 8           # px above/below the characters, room for the success "pop" to grow into
 WIDE_RATIO = 1.5         # window at least this much wider than tall: side-by-side layout
@@ -678,13 +679,17 @@ class App:
         card = self.card_frame
         # Three blocks, arranged by _apply_layout: stacked when the window is tall,
         # side by side (characters left, the rest right) when it's short and wide.
-        card_top = tk.Frame(card, bg=CARD)      # Hear it, YoYo level
+        card_top = tk.Frame(card, bg=CARD)      # Hear it, ★ Master, YoYo level
         self.card_main = tk.Frame(card, bg=CARD)  # characters + traditional
         self.card_side = tk.Frame(card, bg=CARD)  # meaning + status
         self.card_top = card_top
         self.layout_mode = None
+        self.side_empty = False  # nothing to show beside the characters (see _fit_side)
         self.speak_btn = self._button(card_top, "🔊 Hear it", self._speak, TEAL)
         self.speak_btn.pack(side="left")
+        master = self._button(card_top, "★ Master", self._master, YELLOW)
+        master.configure(font=("Segoe UI", 9, "bold"), padx=6, pady=2)
+        master.pack(side="left", padx=(6, 0))
         self.level_bar = tk.Canvas(card_top, width=120, height=14, bg=CARD, highlightthickness=0)
         self.level_bar.pack(side="right")
         # A canvas so each character can be colored and carry its pinyin on top.
@@ -832,9 +837,13 @@ class App:
             card.grid_columnconfigure(1, weight=2, uniform="cols")
             card.grid_rowconfigure(1, weight=1)
             # no n/s stickiness: the character block sits centered vertically on the left
-            self.card_main.grid(row=0, column=0, rowspan=2, sticky="ew", pady=pad)
-            self.card_top.grid(row=0, column=1, sticky="new", padx=10, pady=(pad, 0))
-            self.card_side.grid(row=1, column=1, sticky="new", pady=(pad, 0))
+            if self.side_empty:  # nothing beside the characters: they get the whole width
+                self.card_top.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=(pad, 0))
+                self.card_main.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, pad))
+            else:
+                self.card_main.grid(row=0, column=0, rowspan=2, sticky="ew", pady=pad)
+                self.card_top.grid(row=0, column=1, sticky="new", padx=10, pady=(pad, 0))
+                self.card_side.grid(row=1, column=1, sticky="new", pady=(pad, 0))
         else:
             card.grid_columnconfigure(0, weight=1)
             card.grid_rowconfigure(1, weight=1)
@@ -914,10 +923,12 @@ class App:
             _, size, line_lengths, base_h = self.hz_layout
             return self._paint_hanzi(a, size, line_lengths, base_h, width, gutter, compare)
         room = self._hanzi_room()
-        size = 46 if len(text) <= 4 else 36 if len(text) <= 8 else 28 if len(text) <= 14 else 22
-        # shrink to fit on one line where possible before wrapping
-        while size > 20 and sum(cell[2] for cell in self._hanzi_cells(text, size)[0]) > avail:
-            size -= 2
+        # start big so the characters fill the card, then shrink to fit on one line, but only
+        # down to a readable size for its length: below that a long sentence wraps instead
+        floor = 46 if len(text) <= 4 else 36 if len(text) <= 8 else 28 if len(text) <= 14 else 22
+        size = HANZI_MAX
+        while size > floor and sum(cell[2] for cell in self._hanzi_cells(text, size)[0]) > avail:
+            size -= 4 if size > 60 else 2
 
         def heights(rb, hz, sd):
             return rb.metrics("linespace"), hz.metrics("linespace"), sd.metrics("linespace") if compare else 0
@@ -938,7 +949,7 @@ class App:
         # and shrink until it fits the height available (short windows)
         lines, fonts, hs, needed = wrap(size)
         while needed > room and size > 14:
-            size -= 2
+            size -= 4 if size > 60 else 2
             lines, fonts, hs, needed = wrap(size)
         base_h = len(lines) * sum(hs)
         line_lengths = [len(line) for line, _ in lines]
@@ -1273,7 +1284,7 @@ class App:
             if self.asleep:
                 self._set_status(f"💤 Mic off\n{HOTKEY_NAME} or click the card to listen", DIM)
             else:
-                self._set_status("🎙 Say it in Mandarin — or say “pass”", DIM)
+                self._set_status("")  # no prompt: the room goes to the characters
         show = self.english_var.get() or self.solved
         self.english.configure(text=c["english"] if show else "")
 
@@ -1298,6 +1309,15 @@ class App:
 
     def _set_status(self, text, color=DIM):
         self.status.configure(text=text, fg=color)
+        self.root.after_idle(self._fit_side)  # after the meaning is set too
+
+    def _fit_side(self):
+        """Wide window: with no meaning or message to show, the characters get the full width."""
+        empty = not self.english.get_text().strip() and not self.status.get_text().strip()
+        if empty != self.side_empty:
+            self.side_empty = empty
+            if self.layout_mode and self.layout_mode[0] == "wide":
+                self._apply_layout(*self.layout_mode)
 
     def _record(self, ok, easy=False):
         """Grade like YoYo's buttons and send it: right on the first try = Good (+2),
@@ -1463,6 +1483,33 @@ class App:
         else:
             self._finish(True, "✓ Graded", grade=answer)
 
+    def _master(self):
+        """★ Master: you never want to see this card again. Sends Good (+2) three times, which
+        takes any card to mastered (5) on YoYo. Asks first, since it can't be taken back here."""
+        if not self.card:
+            return
+        card = self.card
+        if not messagebox.askyesno(
+                "Master this card?",
+                f"{card['simplified']}  {card['pinyin']}\n\nSend Good to YoYo three times so this card is "
+                "mastered and you stop seeing it?", parent=self.root):
+            return
+        if card is not self.card:  # the card changed while the question was up
+            return
+        if self.advance_job:
+            self.root.after_cancel(self.advance_job)
+        self.listener.reset()
+        for _ in range(3):
+            self._record(True, easy=True)
+        self.locked = self.solved = True
+        self.english.configure(text=card["english"])
+        answer = self._answer_ruby()
+        self._render_hanzi(set(range(len(answer))), ruby=answer, ruby_color=GREEN, reveal=True)
+        self._set_status("★ Mastered — Good ×3 sent to YoYo", YELLOW)
+        self._update_stats()
+        self._flash(GREEN)
+        self.advance_job = self.root.after(int(self.delay_var.get() * 1000), self._next_card)
+
     # ---------- read the card aloud
 
     def _speak(self):
@@ -1509,7 +1556,7 @@ class App:
         self._show_mic_state()
         self._flash(TEAL)
         if not self.locked and not self.solved:
-            self._set_status("🎙 Listening — say it in Mandarin, or say “pass”", DIM)
+            self._set_status("")
         elif self.solved and not self.locked:
             self._set_status("🎙 Listening — say it again", DIM)
 

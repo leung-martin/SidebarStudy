@@ -21,6 +21,21 @@ export const nextLevel = (level, answer) => Math.max(0, Math.min(MASTERED, Math.
 
 export class AuthError extends Error {}
 
+/** [level id, answers] uploads that name each card at most once: answering a card again
+ *  (★ Master sends Good three times) goes in the next upload, so YoYo counts every answer. */
+function* uploads(byLevel) {
+  for (const [levelId, items] of byLevel) {
+    const rounds = [];
+    for (const item of items) {
+      let r = rounds.find(r => !r.ids.has(item[1]));
+      if (!r) rounds.push(r = { batch: [], ids: new Set() });
+      r.batch.push(item);
+      r.ids.add(item[1]);
+    }
+    for (const r of rounds) yield [levelId, r.batch];
+  }
+}
+
 async function pool(items, worker, size = WORKERS) {
   const out = new Array(items.length);
   let next = 0;
@@ -248,7 +263,7 @@ export class YoyoSync {
         unknown.push(item);  // a full pull since the answer didn't find it on YoYo
       }
     }
-    for (const [levelId, items] of byLevel) {
+    for (const [levelId, items] of uploads(byLevel)) {
       const before = Object.fromEntries((await this.fetch(levelId)).map(c => [c.code, c.masteryLevel ?? -1]));
       await this.post("/results/flashcard-mastery", {
         responses: items.map(([it, id]) => ({ flashcardId: id, answer: it.answer })),

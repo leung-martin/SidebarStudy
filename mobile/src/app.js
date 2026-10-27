@@ -19,6 +19,7 @@ const DECKS = [  // course order, like the PC app
 ];
 const NEW_PER_ROUND = 25;     // new cards per round, like a YoYo deck
 const DUE_WAIT_MS = 30e3;     // wait this long for YoYo's due list before using the offline order
+const SETTLE_MS = 700;        // live guess matches every character: this long without more speech ends the phrase
 const $ = id => document.getElementById(id);
 const native = Capacitor.isNativePlatform();
 
@@ -47,7 +48,7 @@ const S = {
   queue: [], card: null, locked: false, solved: false, mustRepeat: false, helped: false,
   said: null, revealArgs: null, passedAt: 0, advanceTimer: null,
   due: null, dueTime: 0, roundRequested: false, speaking: false,
-  streak: 0, right: 0, passed: 0, syncState: "", hzArgs: null,
+  streak: 0, right: 0, passed: 0, syncState: "", hzArgs: null, settleTimer: null,
 };
 
 // ---------- YoYo
@@ -157,6 +158,7 @@ function record(ok, easy = false) {
 
 function nextCard() {
   clearTimeout(S.advanceTimer);
+  clearTimeout(S.settleTimer);
   Object.assign(S, { locked: false, solved: false, mustRepeat: false, helped: false, said: null, revealArgs: null });
   if (!S.queue.length && sync.signedIn && !S.roundRequested) {
     // round finished (or just started): send the answers, then ask YoYo what's due now
@@ -189,10 +191,9 @@ function showCard() {
   promptStatus();
 }
 
-function promptStatus() {
+function promptStatus() {  // no prompt (the mic button says it): the room goes to the characters
   if (!S.card || S.locked || S.solved) return;
-  setStatus(listener.open ? "🎙 Listening — say it in Mandarin, or say “pass”"
-    : "Tap the card and say it in Mandarin — or say “pass”");
+  setStatus("");
 }
 
 function finish(ok, message, grade = null) {
@@ -269,9 +270,33 @@ function grade(answer) {
   }
 }
 
+/** ★ Master: you never want to see this card again. Sends Good (+2) three times, which takes
+ *  any card to mastered (5) on YoYo. Asks first, since it can't be taken back here. */
+function master(e) {
+  e.stopPropagation();  // not a tap on the card (that's the mic)
+  const card = S.card;
+  if (!card) return;
+  if (!confirm(`${card.simplified}  ${card.pinyin}\n\nSend Good to YoYo three times so this card is mastered and you stop seeing it?`)) return;
+  if (card !== S.card) return;  // the card changed while the question was up
+  clearTimeout(S.advanceTimer);
+  clearTimeout(S.settleTimer);
+  for (let i = 0; i < 3; i++) record(true, true);
+  S.locked = S.solved = true;
+  $("english").textContent = card.english;
+  const ans = answerRuby(card);
+  renderHz({ matched: new Set(ans.keys()), ruby: ans, rubyClass: "ok", reveal: true });
+  setStatus("★ Mastered — Good ×3 sent to YoYo", "yellow");
+  updateStats();
+  animate("flash-green");
+  haptic(NotificationType.Success);
+  listener.restart();
+  S.advanceTimer = setTimeout(nextCard, settings.delay * 1000);
+}
+
 // ---------- hearing results
 
 function onPartial(matches) {
+  clearTimeout(S.settleTimer);
   if (S.locked || !S.card || S.speaking) return;
   const r = checkBest(S.card, matches);
   if (!r) return;
@@ -281,11 +306,17 @@ function onPartial(matches) {
     listener.restart();
     return;
   }
+  // every character is there but it isn't certain yet (usually a tone): once you stop talking,
+  // grade the final guesses right away rather than after Google's long silence timeout
+  if (r.ok || r.matched.size === cardUnits(S.card).length) {
+    S.settleTimer = setTimeout(() => { if (!S.locked) listener.finishPhrase(); }, SETTLE_MS);
+  }
   if (!S.solved) renderHz({ matched: r.matched, ruby: r.ruby, toneOff: r.toneOff });
   setStatus(`… ${stripHanzi(r.text) || r.text}  ${r.heardPy}`, "violet");
 }
 
 function onFinal(matches) {
+  clearTimeout(S.settleTimer);
   if (S.locked || !S.card || S.speaking) return;
   if (isPass(matches)) { pass(); return; }
   const r = checkBest(S.card, matches);
@@ -354,10 +385,14 @@ function renderHz({ text, matched = new Set(), final = false, ruby = new Map(), 
 /** Biggest font that fits the space (the pop animation uses transforms, so it never re-wraps). */
 function fitHz() {
   const hz = $("hz"), box = hz.parentElement;
-  const n = Math.max(1, hz.children.length);
-  let size = Math.min(72, Math.max(20, box.clientWidth / (n * 1.1)));
+  const cols = [...hz.querySelectorAll(":scope > .col")];
+  const n = Math.max(1, cols.length || hz.children.length);
+  let size = Math.min(120, Math.max(20, box.clientWidth / (n * 1.1)));
+  // shrink until it fits, and keep it on one line while the characters are still big
+  // (a short word shouldn't break as 六月一 / 号); long sentences wrap at a readable size
+  const wrapped = () => cols.length > 1 && cols[cols.length - 1].offsetTop > cols[0].offsetTop + 2;
   hz.style.fontSize = size + "px";
-  while (size > 18 && (hz.scrollWidth > box.clientWidth || hz.scrollHeight > box.clientHeight)) {
+  while (size > 18 && (hz.scrollWidth > box.clientWidth || hz.scrollHeight > box.clientHeight || (size > 34 && wrapped()))) {
     size -= 3;
     hz.style.fontSize = size + "px";
   }
@@ -374,6 +409,7 @@ function setStatus(text, color = "") {
   const el = $("status");
   el.textContent = text;
   el.style.color = color ? `var(--${color})` : "";
+  if (S.hzArgs) requestAnimationFrame(fitHz);  // the characters' room changes with the side text
 }
 
 function showLoading(text) {
@@ -521,6 +557,7 @@ async function main() {
     if (!window.getSelection().toString()) toggleMic();
   };
   $("hear").onclick = speak;
+  $("master").onclick = master;
   $("good").onclick = () => grade("easy");
   $("notbad").onclick = () => grade("good");
   $("forgot").onclick = () => grade("hard");

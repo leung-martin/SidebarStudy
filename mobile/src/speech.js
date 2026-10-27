@@ -152,6 +152,15 @@ export class Listener {
     this.h.partial(matches);
   }
 
+  /** The guesses already match the card: ask for the final guesses now instead of waiting out
+   *  Google's silence timeout (several seconds); stopping makes it deliver them at once. */
+  finishPhrase() {
+    if (!this.session || this.ending) return;
+    this.log("finish early");
+    SpeechRecognition.stop().catch(() => { /* already stopped */ });
+    this.phraseEnded();
+  }
+
   /** A phrase ended: give the recognizer a moment to deliver its final guesses, then grade. */
   phraseEnded() {
     if (!this.session || this.ending) return;
