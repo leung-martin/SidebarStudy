@@ -228,10 +228,83 @@ export function check(card, heard) {
 }
 
 /** Best of the recognizer's alternatives: right with tones > right > most characters matched. */
+// ---------- numbers: Google writes what you say as digits ("2", "25", "2026年", "50%"), so each
+// number is tried the ways it could have been said: 二十五, 两百 or 二百, 二零二六 / 二〇二六 …
+
+const ZH_DIGITS = "零一二三四五六七八九";
+const MAX_NUMBER_VARIANTS = 32;
+
+function sectionReading(n) {  // 1..9999: 一千零五, 三百二十
+  const units = ["", "十", "百", "千"], ds = [...String(n)].map(Number);
+  let out = "", zero = false;
+  ds.forEach((d, i) => {
+    if (!d) { zero = out !== ""; return; }  // a gap reads 零 once, only before another digit
+    if (zero) { out += "零"; zero = false; }
+    out += ZH_DIGITS[d] + units[ds.length - 1 - i];
+  });
+  return out;
+}
+
+/** 0 -> 零, 12 -> 十二, 110 -> 一百一十, 20500 -> 二万零五百 (the 两 forms are added by intReadings). */
+function intReading(n) {
+  if (!n) return "零";
+  const yi = Math.floor(n / 1e8), wan = Math.floor(n / 1e4) % 1e4, rest = n % 1e4;
+  let out = yi ? intReading(yi) + "亿" : "";
+  if (wan) out += (out && wan < 1000 ? "零" : "") + sectionReading(wan) + "万";
+  if (rest) out += (out && rest < 1000 ? "零" : "") + sectionReading(rest);
+  return out.startsWith("一十") ? out.slice(1) : out;  // 十二, not 一十二
+}
+
+const digitsReading = (s, zero = "零") => [...s].map(d => d === "0" ? zero : ZH_DIGITS[d]).join("");
+
+/** The ways a run of digits can be said: as a number (with 二 or 两), or digit by digit (years,
+ *  phone numbers, room numbers). */
+function intReadings(s) {
+  const n = Number(s), out = new Set();
+  if (s.length <= 12 && !(s.length > 1 && s[0] === "0")) {
+    const r = intReading(n);
+    out.add(r);
+    if (/^[一二三四五六七八九][百千万][一二三四五六七八九][十百千]$/.test(r)) out.add(r.slice(0, -1));  // 二百五, 一万五
+    if (n === 2) out.add("两");
+    for (const v of [...out]) if (/^二[百千万亿]/.test(v)) out.add("两" + v.slice(1));  // 两百, 两千五
+  }
+  if (s.length > 1) { out.add(digitsReading(s)); out.add(digitsReading(s, "〇")); }
+  return [...out];
+}
+
+function numberReadings(token) {
+  const pct = token.endsWith("%");
+  const t = pct ? token.slice(0, -1) : token;
+  let readings;
+  const m = t.match(/^(\d+)([.:])(\d+)$/);
+  if (m && m[2] === ".") {  // 3.5 -> 三点五
+    readings = intReadings(m[1]).map(r => r + "点" + digitsReading(m[3]));
+  } else if (m) {           // 3:30 -> 三点三十(分)
+    readings = intReadings(m[1]).flatMap(h => intReadings(m[3]).flatMap(mm => [`${h}点${mm}`, `${h}点${mm}分`]));
+  } else {
+    readings = intReadings(t);
+  }
+  return pct ? readings.map(r => "百分之" + r) : readings;
+}
+
+/** heard text with its digits written out every plausible way (the text itself first). */
+export function numberVariants(text) {
+  const norm = text.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xfee0))
+    .replace(/(\d),(?=\d{3})/g, "$1");  // 1,000 -> 1000
+  const parts = norm.split(/(\d+(?:[.:]\d+)?%?)/);
+  if (parts.length === 1) return [text];
+  let variants = [""];
+  parts.forEach((part, i) => {
+    const options = i % 2 ? numberReadings(part) : [part];
+    variants = variants.flatMap(v => options.map(o => v + o)).slice(0, MAX_NUMBER_VARIANTS);
+  });
+  return [text, ...variants];
+}
+
 export function checkBest(card, alternatives) {
   let best = null;
   const score = r => (r.ok ? (r.toneOk ? 3 : 2) : 0) * 1000 + r.matched.size;
-  for (const text of alternatives) {
+  for (const text of alternatives.flatMap(a => a ? numberVariants(a) : [])) {
     if (!text) continue;
     const r = { ...check(card, text), text };
     if (!best || score(r) > score(best)) best = r;

@@ -62,7 +62,8 @@ PASS_CONF = 0.65          # min confidence for the English "pass" keyword
 SLEEP_CHOICES = [0, 1, 2, 3, 5, 10, 15, 30]  # minutes of silence before the mic turns off (0 = never)
 HOTKEY_NAME = "Ctrl+Alt+M"
 SPEAK_HOTKEY_NAME = "Ctrl+Alt+H"  # (Ctrl+Alt+P is taken by another program on this PC)
-GOT_IT_HOTKEY_NAME = "Ctrl+Alt+G"
+# YoYo's grade buttons, as shortcuts: Good / Not Bad / Forgot
+GRADE_HOTKEY_NAMES = {"easy": "Ctrl+Alt+G", "good": "Ctrl+Alt+N", "hard": "Ctrl+Alt+F"}
 TTS_RATE = -2             # Windows voice speed, -10..10; a bit slower than normal for learning
 TTS_VOLUME = 100
 LATIN_GAP_MAX = 4        # hanzi an English word in a card may come out as
@@ -528,10 +529,10 @@ class Speaker(threading.Thread):
 class Hotkey(threading.Thread):
     """System-wide shortcuts that work while a game has focus:
     Ctrl+Alt+M switches the mic on/off, Ctrl+Alt+H says the card aloud,
-    Ctrl+Alt+G marks it as said correctly."""
+    Ctrl+Alt+G / N / F grade the card Good / Not Bad / Forgot."""
 
     MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, WM_HOTKEY = 0x1, 0x2, 0x4000, 0x0312
-    KEYS = {1: "M", 2: "H", 3: "G"}
+    KEYS = {1: "M", 2: "H", 3: "G", 4: "N", 5: "F"}
 
     def __init__(self, events):
         super().__init__(daemon=True)
@@ -677,14 +678,13 @@ class App:
         card = self.card_frame
         # Three blocks, arranged by _apply_layout: stacked when the window is tall,
         # side by side (characters left, the rest right) when it's short and wide.
-        card_top = tk.Frame(card, bg=CARD)      # Hear it, Got it, YoYo level
+        card_top = tk.Frame(card, bg=CARD)      # Hear it, YoYo level
         self.card_main = tk.Frame(card, bg=CARD)  # characters + traditional
         self.card_side = tk.Frame(card, bg=CARD)  # meaning + status
         self.card_top = card_top
         self.layout_mode = None
         self.speak_btn = self._button(card_top, "🔊 Hear it", self._speak, TEAL)
         self.speak_btn.pack(side="left")
-        self._button(card_top, "✓ Got it", self._got_it, GREEN).pack(side="left", padx=(6, 0))
         self.level_bar = tk.Canvas(card_top, width=120, height=14, bg=CARD, highlightthickness=0)
         self.level_bar.pack(side="right")
         # A canvas so each character can be colored and carry its pinyin on top.
@@ -723,9 +723,16 @@ class App:
         self.meter_bar = self.meter.create_rectangle(0, 0, 0, 12, fill=TEAL, width=0)
         self.mute_btn = self._button(bottom, "Mic off", self._toggle_mute, BLUE)
         self.mute_btn.pack(side="left", padx=(8, 0))
-        self._button(bottom, "Pass", self._pass, PINK).pack(side="right")
-        self._button(bottom, "Skip", self._skip, ORANGE).pack(side="right", padx=(0, 6))
-        self._button(bottom, "⚙", self._toggle_options, VIOLET).pack(side="right", padx=(0, 6))
+        self._button(bottom, "⚙", self._toggle_options, VIOLET).pack(side="right")
+        grades = tk.Frame(r, bg=BG)  # YoYo's grade buttons, full width under the card
+        grades.pack(fill="x", padx=12, pady=(0, 6), side="bottom", before=self.card_frame)
+        for i, (answer, text, color) in enumerate((("hard", "Forgot", PINK), ("good", "Not Bad", ORANGE),
+                                                   ("easy", "Good", GREEN))):
+            b = self._button(grades, text, lambda a=answer: self._grade(a), color)
+            b.configure(pady=6, font=("Segoe UI", 11, "bold"))
+            b.grid(row=0, column=i, sticky="ew", padx=(0 if i == 0 else 6, 0))
+            grades.columnconfigure(i, weight=1, uniform="grade")
+        self.grades = grades
         self.mastery_btn = self._button(bottom, "Mastery", self._open_mastery, TEAL)
         self.mastery_btn.pack(side="right", padx=(0, 6))
 
@@ -772,7 +779,7 @@ class App:
         self.sleep_lbl.pack(side="left")
         self._button(stepper, "+", lambda: self._change_sleep(1), VIOLET).pack(side="left")
         tk.Label(stepper, text=f"of silence\n{HOTKEY_NAME}: mic on/off · {SPEAK_HOTKEY_NAME}: hear it"
-                               f" · {GOT_IT_HOTKEY_NAME}: got it",
+                               f"\n{' / '.join(GRADE_HOTKEY_NAMES.values())}: Good / Not Bad / Forgot",
                  bg=opt_bg, fg=DIM, justify="left", font=("Segoe UI", 9)).pack(side="left", padx=(8, 0))
         tk.Label(self.options, text="YoYo sync", bg=opt_bg, fg=INK,
                  font=("Segoe UI", 9, "bold")).grid(row=4, column=0, sticky="w", padx=8)
@@ -1229,7 +1236,7 @@ class App:
         self.locked = False
         self.solved = False      # meaning is hidden until the card is answered or passed
         self.must_repeat = False  # after "pass", the card stays until said correctly (no credit)
-        self.helped = False       # missed, tone slip, hint or Got it: not a first-try answer (no Easy)
+        self.helped = False       # missed, tone slip or hint: not a first-try answer (no Good +2)
         self.said = None          # your latest attempt, per character, for the 🎯/🎙 comparison
         if not self.queue and self.sync.signed_in and not self.round_requested:
             # round finished (or just started): send the answers, then ask YoYo what's due now
@@ -1293,8 +1300,9 @@ class App:
         self.status.configure(text=text, fg=color)
 
     def _record(self, ok, easy=False):
-        """Grade like YoYo's buttons and send it: right on the first try = Easy (+2),
-        right after a miss, tone slip, hint or Got it = Not Bad (+1), a pass = Forgot (back to 0)."""
+        """Grade like YoYo's buttons and send it: right on the first try = Good (+2),
+        right after a miss, tone slip or hint = Not Bad (+1), a pass = Forgot (back to 0).
+        The Good / Not Bad / Forgot buttons pick the grade themselves."""
         answer = ("easy" if easy else "good") if ok else "hard"
         code = self.card["code"]
         p = self.progress.setdefault(code, {"level": -1, "ok": 0, "fail": 0})
@@ -1337,8 +1345,14 @@ class App:
         """Today's entry in the progress history: level counts as they stand now, plus
         how many answers of each grade (easy / good / hard) were given today."""
         history = load_json(HISTORY_FILE, {})
-        day = history.setdefault(time.strftime("%Y-%m-%d"), {"easy": 0, "good": 0, "hard": 0})
         levels = [self._level(code) for code in self.all_cards]
+        # level points: every card's level added up, so any Good / Not Bad shows as progress
+        points = sum(min(lv, MASTERED) for lv in levels if lv > 0)
+        today = time.strftime("%Y-%m-%d")
+        if today not in history:  # points_start: the day's gain when yesterday has no points yet
+            history[today] = {"easy": 0, "good": 0, "hard": 0, "points_start": points}
+        day = history[today]
+        day["points"] = points
         day["mastered"] = sum(lv >= MASTERED for lv in levels)
         day["learning"] = sum(0 <= lv < MASTERED for lv in levels)
         day["new"] = sum(lv < 0 for lv in levels)
@@ -1369,7 +1383,7 @@ class App:
     def _answer_ruby(self):
         return {i: u[4] for i, u in enumerate(card_units(self.card))}
 
-    def _finish(self, ok, message):
+    def _finish(self, ok, message, grade=None):
         self.solved = True
         self.english.configure(text=self.card["english"])
         if not ok:
@@ -1386,9 +1400,9 @@ class App:
             return
         self.locked = True
         if not self.must_repeat:  # repeating a passed card doesn't count as mastering it
-            easy = not self.helped
+            easy = grade == "easy" if grade else not self.helped
             self._record(True, easy=easy)
-            message += "   · Easy +2" if easy else "   · Not Bad +1"
+            message += "   · Good +2" if easy else "   · Not Bad +1"
             self.streak += 1
             self.right += 1
             if self.streak % 5 == 0:
@@ -1430,24 +1444,24 @@ class App:
                 self._next_card()
             return
         self.passed_at = time.time()
-        self._finish(False, "Passed ✗ — say it to continue, or Pass again to skip")
+        self._finish(False, "Passed ✗ — say it to continue, or press a grade to move on")
 
-    def _skip(self):
-        if self.card and not self.must_repeat:  # unanswered: still due, so later this round
-            self.queue.append(self.card)
-        self._next_card()
-
-    def _got_it(self):
-        """You said it right but the recognizer missed it: count it as correct (Not Bad, +1).
-        After a pass it only moves on, like saying it correctly would."""
-        if not self.card or self.locked:
+    def _grade(self, answer):
+        """The Good / Not Bad / Forgot buttons, like YoYo's: grade the card yourself.
+        Forgot reveals the answer like saying "pass". Once the card is graded (said right,
+        or forgotten and waiting to be said), any of them moves on."""
+        if not self.card:
+            return
+        if self.locked or self.must_repeat:
+            if time.time() - self.passed_at > 1.0:  # a double-click shouldn't skip the answer
+                self._next_card()
             return
         self.listener.reset()
-        self.helped = True  # unverified by the recognizer, so never Easy
-        if self.must_repeat:
-            self._finish(True, "✓ Moving on")
+        if answer == "hard":
+            self.passed_at = time.time()
+            self._finish(False, "Forgot ✗ — say it to continue, or press a grade to move on")
         else:
-            self._finish(True, "✓ Marked correct")
+            self._finish(True, "✓ Graded", grade=answer)
 
     # ---------- read the card aloud
 
@@ -1458,7 +1472,7 @@ class App:
             self._set_status("No Chinese voice found. Add one in Windows Settings → Time & language → Speech.", RED)
             return
         if not self.locked:
-            self.helped = True  # heard it before answering: a hint, so no Easy
+            self.helped = True  # heard it before answering: a hint, so no Good +2
         self.speaker.say(self.card["simplified"])
 
     def _on_speaking(self, speaking):
@@ -1688,7 +1702,8 @@ class App:
                 elif kind == "pass":
                     self._pass()
                 elif kind == "hotkey":
-                    {1: self._toggle_mute, 2: self._speak, 3: self._got_it}.get(value, lambda: None)()
+                    {1: self._toggle_mute, 2: self._speak, 3: lambda: self._grade("easy"),
+                     4: lambda: self._grade("good"), 5: lambda: self._grade("hard")}.get(value, lambda: None)()
                 elif kind == "speaking":
                     self._on_speaking(value)
                 elif kind == "yoyo_status":

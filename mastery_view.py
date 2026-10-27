@@ -27,7 +27,7 @@ def read_log(path):
 
 def build(decks, level_of, synced_at, path, history=None, activity=None):
     """decks: {course: [card]}; level_of(code) -> -1..5; synced_at: epoch of last YoYo download;
-    history: {"YYYY-MM-DD": {mastered, learning, new, easy, good, hard}} for the progress charts;
+    history: {"YYYY-MM-DD": {mastered, learning, new, points, points_start, easy, good, hard}} for the progress charts;
     activity: the YoYo activity log entries (see YoyoSync), shown as timestamped receipts."""
     courses = []
     for name, cards in decks.items():
@@ -302,40 +302,46 @@ function frame(ticks, y, xs, labels) {
 function progress() {
   const box = document.getElementById("progress");
   if (!H.length) { box.innerHTML = '<h2>Progress</h2><div class="sub">No history yet — it starts with your first session.</div>'; return; }
-  const last = H[H.length - 1], first = H[0];
-  const weekAgo = [...H].reverse().find(h => dayNum(last.date) - dayNum(h.date) >= 7) || first;
-  const gained = last.mastered - weekAgo.mastered;
+  const last = H[H.length - 1], first = H[0], prev = H.length > 1 ? H[H.length - 2] : null;
+  const started = h => h.mastered + h.learning;  // every card you've studied at least once
+  const sign = n => (n >= 0 ? "+" : "") + n.toLocaleString();
+  // level points: each card's YoYo level added up (new 0 … mastered 5), so every Easy or Not Bad
+  // shows, even when nothing reaches mastered. Tracked from the day it was added to the app.
+  const base = prev?.points ?? last.points_start;
+  const pointsToday = last.points == null || base == null ? null : last.points - base;
+  const startedGain = prev ? started(last) - started(prev) : null;
+  const masteredGain = prev ? last.mastered - prev.mastered : null;
+  const vs = prev ? `SINCE ${fmtDate(prev.date).toUpperCase()}` : "TODAY";
   const answered = (last.easy || 0) + (last.good || 0) + (last.hard || 0);
-  const firstTry = answered ? Math.round((last.easy || 0) / answered * 100) : null;
-  const since = weekAgo === first && dayNum(last.date) - dayNum(first.date) < 7 ? `since ${fmtDate(first.date)}` : "in 7 days";
   box.innerHTML = `<h2>Progress</h2>
     <div class="stats">
-      <div class="stat"><b>${last.mastered.toLocaleString()}</b><span>MASTERED</span></div>
-      <div class="stat"><b>${gained >= 0 ? "+" : ""}${gained.toLocaleString()}</b><span>MASTERED ${since.toUpperCase()}</span></div>
-      <div class="stat"><b>${answered}</b><span>ANSWERED TODAY</span></div>
-      <div class="stat"><b>${firstTry === null ? "–" : firstTry + "%"}</b><span>RIGHT FIRST TRY TODAY</span></div>
+      <div class="stat"><b>${pointsToday === null ? "–" : sign(pointsToday)}</b><span>LEVELS GAINED TODAY</span></div>
+      <div class="stat"><b>${startedGain === null ? started(last).toLocaleString() : sign(startedGain)}</b><span>${startedGain === null ? "CARDS STARTED" : "CARDS STARTED " + vs}</span></div>
+      <div class="stat"><b>${masteredGain === null ? last.mastered.toLocaleString() : sign(masteredGain)}</b><span>${masteredGain === null ? "MASTERED" : "MASTERED " + vs}</span></div>
+      <div class="stat"><b>${answered}</b><span>ANSWERED TODAY (THIS PC)</span></div>
     </div>
     <div class="charts">
-      <div class="chart"><h3>Mastered cards</h3><svg id="trend" viewBox="0 0 ${W} ${PH}" role="img" aria-label="Mastered cards per day"></svg>
-        ${H.length < 2 ? '<p class="note">Tracking started ' + fmtDate(first.date) + ' — the line grows one point per day you study.</p>' : ""}</div>
+      <div class="chart"><h3>Your cards</h3><svg id="trend" viewBox="0 0 ${W} ${PH}" role="img" aria-label="Cards started and mastered per day"></svg>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Started (learning + mastered)</span><span><i style="background:var(--s2)"></i>Mastered</span></div>
+        ${H.length < 2 ? '<p class="note">Tracking started ' + fmtDate(first.date) + ' — the lines grow one point per day you study.</p>' : ""}</div>
       <div class="chart"><h3>Answers per day</h3><svg id="bars" viewBox="0 0 ${W} ${PH}" role="img" aria-label="Answers per day by grade"></svg>
-        <div class="legend"><span><i style="background:var(--s1)"></i>Easy (first try)</span><span><i style="background:var(--s2)"></i>Not Bad</span><span><i style="background:var(--s3)"></i>Forgot (passed)</span></div></div>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Good</span><span><i style="background:var(--s2)"></i>Not Bad</span><span><i style="background:var(--s3)"></i>Forgot</span></div></div>
     </div>
-    <details class="table"><summary>Show as table</summary><table><tr><th>Day</th><th>Mastered</th><th>Learning</th><th>New</th><th>Easy</th><th>Not Bad</th><th>Forgot</th></tr>
-      ${[...H].reverse().map(h => `<tr><td>${fmtDate(h.date)}</td><td>${h.mastered.toLocaleString()}</td><td>${h.learning}</td><td>${h.new.toLocaleString()}</td><td>${h.easy || 0}</td><td>${h.good || 0}</td><td>${h.hard || 0}</td></tr>`).join("")}
+    <details class="table"><summary>Show as table</summary><table><tr><th>Day</th><th>Level points</th><th>Started</th><th>Mastered</th><th>Learning</th><th>New</th><th>Good</th><th>Not Bad</th><th>Forgot</th></tr>
+      ${[...H].reverse().map(h => `<tr><td>${fmtDate(h.date)}</td><td>${h.points == null ? "–" : h.points.toLocaleString()}</td><td>${started(h).toLocaleString()}</td><td>${h.mastered.toLocaleString()}</td><td>${h.learning}</td><td>${h.new.toLocaleString()}</td><td>${h.easy || 0}</td><td>${h.good || 0}</td><td>${h.hard || 0}</td></tr>`).join("")}
     </table></details>`;
 
-  // trend line: mastered per day, x by calendar day so skipped days show as gaps in time
+  // two lines, started and mastered, x by calendar day so skipped days show as gaps in time
   const d0 = dayNum(first.date), span = Math.max(dayNum(last.date) - d0, 1);
   const xs = i => H.length < 2 ? (M.l + W - M.r) / 2 : M.l + (dayNum(H[i].date) - d0) / span * (W - M.l - M.r);
-  const vals = H.map(h => h.mastered), lo = Math.min(...vals), hi = Math.max(...vals);
+  const vals = H.flatMap(h => [h.mastered, started(h)]), lo = Math.min(...vals), hi = Math.max(...vals);
   const ticks = niceTicks(lo - Math.max(5, (hi - lo) * 0.1), hi + Math.max(5, (hi - lo) * 0.1));
   const y = v => M.t + (1 - (v - ticks[0]) / (ticks[ticks.length - 1] - ticks[0])) * (PH - M.t - M.b);
-  const pts = H.map((h, i) => `${xs(i)},${y(h.mastered)}`).join(" ");
+  const series = [[started, "s1"], [h => h.mastered, "s2"]];
   const trend = document.getElementById("trend");
   trend.innerHTML = frame(ticks, y, xs, H.map(h => h.date)) +
-    `<polyline class="line" points="${pts}"/>` +
-    (H.length <= 60 ? H.map((h, i) => `<circle class="dot" cx="${xs(i)}" cy="${y(h.mastered)}" r="4.5"/>`).join("") : "") +
+    series.map(([f, c]) => `<polyline class="line" style="stroke:var(--${c})" points="${H.map((h, i) => `${xs(i)},${y(f(h))}`).join(" ")}"/>` +
+      (H.length <= 60 ? H.map((h, i) => `<circle class="dot" style="fill:var(--${c})" cx="${xs(i)}" cy="${y(f(h))}" r="4.5"/>`).join("") : "")).join("") +
     `<line class="xh" id="xh" y1="${M.t}" y2="${PH - M.b}"/>` +
     `<rect class="hit" x="${M.l}" y="0" width="${W - M.l - M.r}" height="${PH}"/>`;
   const hit = trend.querySelector(".hit"), xh = trend.querySelector("#xh");
@@ -343,10 +349,13 @@ function progress() {
     const p = trend.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
     const sx = p.matrixTransform(trend.getScreenCTM().inverse()).x;
     let i = 0; H.forEach((_, k) => { if (Math.abs(xs(k) - sx) < Math.abs(xs(i) - sx)) i = k; });
-    const h = H[i], prev = H[i - 1], diff = prev ? h.mastered - prev.mastered : null;
+    const h = H[i], before = H[i - 1];
+    const d = f => before ? ` (${sign(f(h) - f(before))})` : "";
     xh.setAttribute("x1", xs(i)); xh.setAttribute("x2", xs(i)); xh.style.visibility = "visible";
-    showTip(e, `<b>${fmtDate(h.date)}</b>Mastered ${h.mastered.toLocaleString()}` +
-      (diff !== null ? ` (${diff >= 0 ? "+" : ""}${diff})` : "") + `<br>Learning ${h.learning} · New ${h.new.toLocaleString()}`);
+    showTip(e, `<b>${fmtDate(h.date)}</b>Started ${started(h).toLocaleString()}${d(started)}` +
+      `<br>Mastered ${h.mastered.toLocaleString()}${d(x => x.mastered)}` +
+      (h.points != null ? `<br>Level points ${h.points.toLocaleString()}` : "") +
+      `<br>Learning ${h.learning} · New ${h.new.toLocaleString()}`);
   });
   hit.addEventListener("mouseleave", () => { xh.style.visibility = "hidden"; hideTip(); });
 
@@ -371,7 +380,7 @@ function progress() {
   barsEl.innerHTML = bars;
   barsEl.querySelectorAll(".hit").forEach(r => {
     r.addEventListener("mousemove", e => { const h = H[+r.dataset.i];
-      showTip(e, `<b>${fmtDate(h.date)}</b>Easy ${h.easy || 0} · Not Bad ${h.good || 0} · Forgot ${h.hard || 0}`); });
+      showTip(e, `<b>${fmtDate(h.date)}</b>Good ${h.easy || 0} · Not Bad ${h.good || 0} · Forgot ${h.hard || 0}`); });
     r.addEventListener("mouseleave", hideTip);
   });
 }
@@ -383,7 +392,7 @@ function activity() {
   const A = DATA.activity || [];
   const card = {};
   for (const c of DATA.courses) for (const r of c.cards) card[r[0]] = r;
-  const ANSWER = { easy: "Easy", good: "Not Bad", hard: "Forgot" };
+  const ANSWER = { easy: "Good", good: "Not Bad", hard: "Forgot" };
   const LV = v => v < 0 ? "new" : v >= 5 ? "5 ✓" : String(v);
   const KINDS = { upload: "Sent", download: "Downloaded", due: "Due list", check: "Check", "sign-in": "Sign-in",
                   blocked: "Blocked", dropped: "Dropped", error: "Problem" };

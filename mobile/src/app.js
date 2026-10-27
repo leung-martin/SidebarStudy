@@ -195,7 +195,7 @@ function promptStatus() {
     : "Tap the card and say it in Mandarin — or say “pass”");
 }
 
-function finish(ok, message) {
+function finish(ok, message, grade = null) {
   S.solved = true;
   $("english").textContent = S.card.english;
   if (!ok) {  // passed: reveal, and stay until it's said correctly (YoYo decides when it's due again)
@@ -212,9 +212,9 @@ function finish(ok, message) {
   }
   S.locked = true;
   if (!S.mustRepeat) {  // repeating a passed card doesn't count as mastering it
-    const easy = !S.helped;
+    const easy = grade ? grade === "easy" : !S.helped;
     record(true, easy);
-    message += easy ? "   · Easy +2" : "   · Not Bad +1";
+    message += easy ? "   · Good +2" : "   · Not Bad +1";
     S.streak++;
     S.right++;
     if (S.streak % 5 === 0) message += `   🔥 ${S.streak} in a row!`;
@@ -249,18 +249,24 @@ function pass() {
     return;
   }
   S.passedAt = Date.now();
-  finish(false, "Passed ✗ — say it to continue, or Pass again to skip");
+  finish(false, "Passed ✗ — say it to continue, or tap a grade to move on");
 }
 
-function skip() {
-  if (S.card && !S.mustRepeat) S.queue.push(S.card);
-  nextCard();
-}
-
-function gotIt() {
-  if (!S.card || S.locked) return;
-  S.helped = true;  // unverified by the recognizer, so never Easy
-  finish(true, S.mustRepeat ? "✓ Moving on" : "✓ Marked correct");
+/** The Good / Not Bad / Forgot buttons, like YoYo's: grade the card yourself. Forgot reveals the
+ *  answer like saying "pass". Once the card is graded, any of them moves on. */
+function grade(answer) {
+  if (!S.card) return;
+  if (S.locked || S.mustRepeat) {
+    if (Date.now() - S.passedAt > 1000) nextCard();  // a double tap shouldn't skip the answer
+    return;
+  }
+  listener.restart();
+  if (answer === "hard") {
+    S.passedAt = Date.now();
+    finish(false, "Forgot ✗ — say it to continue, or tap a grade to move on");
+  } else {
+    finish(true, "✓ Graded", answer);
+  }
 }
 
 // ---------- hearing results
@@ -299,16 +305,16 @@ function onFinal(matches) {
 
 async function speak() {
   if (!S.card) return;
-  if (!S.locked) S.helped = true;  // a hint, so no Easy
+  if (!S.locked) S.helped = true;  // a hint, so no Good +2
   S.speaking = true;
-  $("hear").textContent = "🔊 …";
+  $("hear").textContent = "…";
   await listener.pause();  // the mic mustn't grade the app's own voice
   try {
     await TextToSpeech.speak({ text: stripHanzi(S.card.simplified) || S.card.simplified, lang: "zh-CN", rate: 0.85 });
   } catch (e) {
     setStatus("No Chinese voice: install one in Settings → General management → Text-to-speech.", "red");
   }
-  $("hear").textContent = "🔊 Hear";
+  $("hear").textContent = "🔊";
   setTimeout(() => { S.speaking = false; listener.resume(); }, 600);  // echo tail
 }
 
@@ -515,9 +521,9 @@ async function main() {
     if (!window.getSelection().toString()) toggleMic();
   };
   $("hear").onclick = speak;
-  $("gotit").onclick = gotIt;
-  $("skip").onclick = skip;
-  $("pass").onclick = pass;
+  $("good").onclick = () => grade("easy");
+  $("notbad").onclick = () => grade("good");
+  $("forgot").onclick = () => grade("hard");
   $("sync").onclick = () => { if (sync.signedIn) { sync.syncNow(true); sync.requestDue(); } else { fillSettings(); $("settings").showModal(); } };
   window.addEventListener("resize", () => { if (S.hzArgs) fitHz(); });
   applyKeepAwake();

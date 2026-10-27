@@ -30,7 +30,7 @@ FULL_PULL_EVERY = 6 * 3600
 CHECK_EVERY = 5 * 60    # how often to ask YoYo whether anything changed there
 PUSH_DEBOUNCE = 3       # seconds to wait for more answers before pushing
 
-# YoYo's grade buttons: Forgot (hard) -5, Not Bad (good) +1, Easy +2
+# YoYo's grade buttons: Forgot (hard) -5, Not Bad (good) +1, Good (easy) +2
 LEVEL_DELTA = {"hard": -5, "good": 1, "easy": 2}
 MASTERED = 5
 
@@ -363,7 +363,7 @@ class YoyoSync(threading.Thread):
             dropped = [code for code, lv in ((c["code"], c.get("masteryLevel", -1)) for c in after_cards)
                        if code not in answered and lv < before.get(code, -1)]
             after = {c["code"]: c.get("masteryLevel", -1) for c in after_cards}
-            names = {"easy": "Easy", "good": "Not Bad", "hard": "Forgot"}
+            names = {"easy": "Good", "good": "Not Bad", "hard": "Forgot"}
             counts = [f"{n} {names[a]}" for a in ("easy", "good", "hard")
                       if (n := sum(1 for it, _ in items if it["answer"] == a))]
             self.log("upload", f"Sent {len(items)} answer(s): " + ", ".join(counts),
