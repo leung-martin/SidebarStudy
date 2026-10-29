@@ -58,12 +58,26 @@ HISTORY_FILE = os.path.join(ROOT, "progress_history.json")  # one snapshot per d
 YOYO_LOG_FILE = os.path.join(ROOT, "yoyo_log.jsonl")     # receipt of every exchange with YoYo
 
 PASS_WORDS = {"pass", "passed", "past"}
+
+
+def _largest(lo, hi, fits):
+    """The largest size in lo..hi that fits (lo if none does): a binary search, as fits(size)
+    only turns false as the size grows."""
+    if fits(hi):
+        return hi
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
 PASS_CONF = 0.65          # min confidence for the English "pass" keyword
 SLEEP_CHOICES = [0, 1, 2, 3, 5, 10, 15, 30]  # minutes of silence before the mic turns off (0 = never)
 HOTKEY_NAME = "Ctrl+Alt+M"
 SPEAK_HOTKEY_NAME = "Ctrl+Alt+H"  # (Ctrl+Alt+P is taken by another program on this PC)
 # YoYo's grade buttons, as shortcuts: Good / Not Bad / Forgot
-GRADE_HOTKEY_NAMES = {"easy": "Ctrl+Alt+G", "good": "Ctrl+Alt+N", "hard": "Ctrl+Alt+F"}
+GRADE_HOTKEY_NAMES = {"hard": "Ctrl+Alt+←", "good": "Ctrl+Alt+↓", "easy": "Ctrl+Alt+→"}
 TTS_RATE = -2             # Windows voice speed, -10..10; a bit slower than normal for learning
 TTS_VOLUME = 100
 LATIN_GAP_MAX = 4        # hanzi an English word in a card may come out as
@@ -530,10 +544,11 @@ class Speaker(threading.Thread):
 class Hotkey(threading.Thread):
     """System-wide shortcuts that work while a game has focus:
     Ctrl+Alt+M switches the mic on/off, Ctrl+Alt+H says the card aloud,
-    Ctrl+Alt+G / N / F grade the card Good / Not Bad / Forgot."""
+    Ctrl+Alt+Left / Down / Right grade the card Forgot / Not Bad / Good."""
 
     MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, WM_HOTKEY = 0x1, 0x2, 0x4000, 0x0312
-    KEYS = {1: "M", 2: "H", 3: "G", 4: "N", 5: "F"}
+    VK_LEFT, VK_RIGHT, VK_DOWN = 0x25, 0x27, 0x28
+    KEYS = {1: ord("M"), 2: ord("H"), 3: VK_RIGHT, 4: VK_DOWN, 5: VK_LEFT}  # 3-5: Good / Not Bad / Forgot
 
     def __init__(self, events):
         super().__init__(daemon=True)
@@ -546,7 +561,7 @@ class Hotkey(threading.Thread):
         user32 = ctypes.windll.user32
         mods = self.MOD_CONTROL | self.MOD_ALT | self.MOD_NOREPEAT
         # a combination another program already owns just doesn't register; the buttons still work
-        self.registered = {k: bool(user32.RegisterHotKey(None, k, mods, ord(key))) for k, key in self.KEYS.items()}
+        self.registered = {k: bool(user32.RegisterHotKey(None, k, mods, key)) for k, key in self.KEYS.items()}
         if not any(self.registered.values()):
             return
         msg = wintypes.MSG()
@@ -696,7 +711,7 @@ class App:
         self.hanzi = tk.Canvas(self.card_main, bg=CARD, height=80, highlightthickness=0)
         self.hanzi.pack(fill="x", padx=8, pady=(2, 0))
         self.hanzi.bind("<Configure>", self._on_hanzi_resize)
-        self.hz_args, self.hz_dx, self.hz_width, self.fonts = {}, 0, 0, {}
+        self.hz_args, self.hz_dx, self.hz_width, self.fonts, self.widths = {}, 0, 0, {}, {}
         self.hz_hits, self.hz_sel, self.hz_anchor = [], None, None
         self.hz_layout = None  # (key, size, chars per line, height) of the last full layout
         self.hanzi.configure(cursor="xterm")
@@ -784,7 +799,7 @@ class App:
         self.sleep_lbl.pack(side="left")
         self._button(stepper, "+", lambda: self._change_sleep(1), VIOLET).pack(side="left")
         tk.Label(stepper, text=f"of silence\n{HOTKEY_NAME}: mic on/off · {SPEAK_HOTKEY_NAME}: hear it"
-                               f"\n{' / '.join(GRADE_HOTKEY_NAMES.values())}: Good / Not Bad / Forgot",
+                               f"\n{' / '.join(GRADE_HOTKEY_NAMES.values())}: Forgot / Not Bad / Good",
                  bg=opt_bg, fg=DIM, justify="left", font=("Segoe UI", 9)).pack(side="left", padx=(8, 0))
         tk.Label(self.options, text="YoYo sync", bg=opt_bg, fg=INK,
                  font=("Segoe UI", 9, "bold")).grid(row=4, column=0, sticky="w", padx=8)
@@ -903,6 +918,18 @@ class App:
         self.hz_sel = None
         self._draw_hanzi()
 
+    def _measure(self, font, text):
+        """A text's width in a font, remembered (measuring through Tk is slow)."""
+        if not text:
+            return 0
+        if len(text) == 1 and "一" <= text <= "鿿":
+            text = "中"  # every Chinese character is as wide as any other: measure one for all
+        key = (str(font), text)
+        w = self.widths.get(key)
+        if w is None:
+            w = self.widths[key] = font.measure(text)
+        return w
+
     def _font(self, family, size):
         key = (family, size)
         if key not in self.fonts:
@@ -926,9 +953,7 @@ class App:
         # start big so the characters fill the card, then shrink to fit on one line, but only
         # down to a readable size for its length: below that a long sentence wraps instead
         floor = 46 if len(text) <= 4 else 36 if len(text) <= 8 else 28 if len(text) <= 14 else 22
-        size = HANZI_MAX
-        while size > floor and sum(cell[2] for cell in self._hanzi_cells(text, size)[0]) > avail:
-            size -= 4 if size > 60 else 2
+        size = _largest(floor, HANZI_MAX, lambda s: sum(cell[2] for cell in self._hanzi_cells(text, s)[0]) <= avail)
 
         def heights(rb, hz, sd):
             return rb.metrics("linespace"), hz.metrics("linespace"), sd.metrics("linespace") if compare else 0
@@ -948,8 +973,8 @@ class App:
 
         # and shrink until it fits the height available (short windows)
         lines, fonts, hs, needed = wrap(size)
-        while needed > room and size > 14:
-            size -= 4 if size > 60 else 2
+        if needed > room:
+            size = _largest(14, size, lambda s: wrap(s)[3] <= room)
             lines, fonts, hs, needed = wrap(size)
         base_h = len(lines) * sum(hs)
         line_lengths = [len(line) for line, _ in lines]
@@ -1093,7 +1118,7 @@ class App:
                 k += 1
             else:
                 fill, rfill = a["color"], DIM
-            w = max(hz.measure(ch), rb.measure(syl) if syl else 0, sd.measure(said) if said else 0) \
+            w = max(self._measure(hz, ch), self._measure(rb, syl), self._measure(sd, said)) \
                 + (10 if syl or said else 2)
             cells.append((ch, syl, w, fill, rfill, said, sfill))
 
